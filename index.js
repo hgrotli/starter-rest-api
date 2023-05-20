@@ -1,72 +1,79 @@
-const express = require('express')
-const app = express()
-const db = require('@cyclic.sh/dynamodb')
+import json
+import requests
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
+API_KEY1 = "json"
+API_KEY2 = "vcard"
 
-// #############################################################################
-// This configures static hosting for files in /public that have the extensions
-// listed in the array.
-// var options = {
-//   dotfiles: 'ignore',
-//   etag: false,
-//   extensions: ['htm', 'html','css','js','ico','jpg','jpeg','png','svg'],
-//   index: ['index.html'],
-//   maxAge: '1m',
-//   redirect: false
-// }
-// app.use(express.static('public', options))
-// #############################################################################
+app = Flask(__name__)
+CORS(app)
 
-// Create or Update an item
-app.post('/:col/:key', async (req, res) => {
-  console.log(req.body)
+def fetch_data(*, update: bool = False, json_cache: str, url: str):
+    if update:
+        json_data = None
+    else:
+        try:
+            with open(json_cache, "r") as file:
+                json_data = json.load(file)
+                print("fetched from local cache")
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"No local cache found... ({e})")
+            json_data = None
+    if not json_data:
+        print("fetching new json data - (creating local cache)")
+        json_data = requests.get(url).json()
+        with open(json_cache, "w") as file:
+            json.dump(json_data, file)
+    return json_data
 
-  const col = req.params.col
-  const key = req.params.key
-  console.log(`from collection: ${col} delete key: ${key} with params ${JSON.stringify(req.params)}`)
-  const item = await db.collection(col).set(key, req.body)
-  console.log(JSON.stringify(item, null, 2))
-  res.json(item).end()
-})
+@app.route("/")
+def hello():
+    return "Velkommen til vår cache"
 
-// Delete an item
-app.delete('/:col/:key', async (req, res) => {
-  const col = req.params.col
-  const key = req.params.key
-  console.log(`from collection: ${col} delete key: ${key} with params ${JSON.stringify(req.params)}`)
-  const item = await db.collection(col).delete(key)
-  console.log(JSON.stringify(item, null, 2))
-  res.json(item).end()
-})
+@app.route("/proxy/cacheJson", methods=["POST"])
+def proxy_cache_json():
+    # Add the password validation logic here
+    password = request.json.get("password")
+    if password != API_KEY1:
+        print("Wrong API key")
+        return {"message": "Invalid API key"}, 401
+    url = "http://localhost:6438/contacts"
+    json_cache = "cacheJson.json"
+    data: dict = fetch_data(update=False, json_cache=json_cache, url=url)
+    with open(json_cache, "r") as file:
+        data = json.load(file)
+    return jsonify(data)
 
-// Get a single item
-app.get('/:col/:key', async (req, res) => {
-  const col = req.params.col
-  const key = req.params.key
-  console.log(`from collection: ${col} get key: ${key} with params ${JSON.stringify(req.params)}`)
-  const item = await db.collection(col).get(key)
-  console.log(JSON.stringify(item, null, 2))
-  res.json(item).end()
-})
+@app.route("/proxy/cacheVcard", methods=["POST"])
+def proxy_cache_vcard():
+    # Add the password validation logic here
+    password = request.json.get("password")
+    if password != API_KEY2:
+        print("Wrong API key")
+        return {"message": "Invalid API key"}, 401
+    url = "http://localhost:6438/contacts/vcard"
+    json_cache = "cacheVcard.json"
+    data: dict = fetch_data(update=False, json_cache=json_cache, url=url)
+    with open(json_cache, "r") as file:
+        data = json.load(file)
+    return jsonify(data)
 
-// Get a full listing
-app.get('/:col', async (req, res) => {
-  const col = req.params.col
-  console.log(`list collection: ${col} with params: ${JSON.stringify(req.params)}`)
-  const items = await db.collection(col).list()
-  console.log(JSON.stringify(items, null, 2))
-  res.json(items).end()
-})
+@app.route("/update_cache")
+def update_cache():
+    json_cache = "cacheJson.json"
+    vcard_cache = "cacheVcard.json"
 
-// Catch all handler for all other request.
-app.use('*', (req, res) => {
-  res.json({ msg: 'no route handler found' }).end()
-})
+    # Update the cache JSON files
+    url = "http://localhost:6438/contacts"
+    json_data = requests.get(url).json()
+    with open(json_cache, "w") as file:
+        json.dump(json_data, file)
+    url = "http://localhost:6438/contacts/vcard"
+    vcard_data = requests.get(url).json()
+    with open(vcard_cache, "w") as file:
+        json.dump(vcard_data, file)
+    return "Cache updated"
 
-// Start the server
-const port = process.env.PORT || 3000
-app.listen(port, () => {
-  console.log(`index.js listening on ${port}`)
-})
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5555)
